@@ -14,9 +14,9 @@ spec:
     spec:
       containers:
       - name: libro-update
-        image: libro-update:latest
+        image: rflorezeam/libro-update:sha-aa8082a
         ports:
         - containerPort: 8084
         env:
         - name: MONGODB_URI
-          value: "mongodb://root:example@mongodb-service:27017" 
+          value: mongodb://root:example@libro-mongodb:27017
