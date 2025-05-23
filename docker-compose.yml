@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  libro-update:
+    build: .
+    container_name: libro-update
+    ports:
+      - "8084:8084"
+    networks:
+      - libro-network
+networks:
+  libro-network:
+    external: true 

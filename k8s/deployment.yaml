@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: libro-update
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: libro-update
+  template:
+    metadata:
+      labels:
+        app: libro-update
+    spec:
+      containers:
+      - name: libro-update
+        image: libro-update:latest
+        ports:
+        - containerPort: 8084
+        env:
+        - name: MONGODB_URI
+          value: "mongodb://root:example@mongodb-service:27017" 

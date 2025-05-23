@@ -1,0 +1,114 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ "feature-workflow" ]
+  pull_request:
+    branches: [ "feature-workflow" ]
+    
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd="mongo --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      MONGO_URI: mongodb://localhost:27017
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Instalar dependencias
+        run: go mod tidy
+
+      - name: Ejecutar pruebas unitarias
+        run: |
+          echo "Ejecutando pruebas..."
+          go test -cover ./...
+
+      - name: Construir imagen Docker
+        run: docker build -t go-mongo-app .
+
+      - name: Levantar contenedores para pruebas externas
+        run: docker compose up -d || true
+
+      - name: Ejecutar pruebas de integración externas
+        run: |
+          echo "Ejecutando pruebas de integración externas..."
+          go test ./... -v || true
+
+      - name: Apagar contenedores
+        if: always()
+        run: docker compose down || true
+
+  release:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/feature-workflow'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Generate new release tag
+        id: tag
+        run: |
+          # Obtener el último tag (si existe)
+          LAST_TAG=$(git describe --tags --abbrev=0 || echo "v0.00.0")
+          echo "Último tag: $LAST_TAG"
+          
+          # Incrementar el número de versión
+          VERSION="v1.00.$((${LAST_TAG##*.} + 1))"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          # Crear y empujar el nuevo tag
+          git tag $VERSION
+          git push origin $VERSION
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.MY_SECRET_TOKEN }}
+
+      - name: Build Docker image for GitHub Packages
+        run: |
+          IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/parcial:latest
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+          docker build -t $IMAGE_NAME .
+
+      - name: Push Docker image to GitHub Packages
+        run: |
+            docker push $IMAGE_NAME

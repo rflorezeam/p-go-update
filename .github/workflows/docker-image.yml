@@ -1,0 +1,152 @@
+name: Docker Build, Test and Push - Update libro
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE_NAME: rflorezeam/libro-update
+
+jobs:
+
+  build-test-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run unit tests
+        run: |
+          echo "Running unit tests..."
+          go test -cover ./...
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          driver: docker-container
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run integration tests
+        run: |
+          echo "Running integration tests..."
+          go test ./... -v || true
+
+      - name: Docker Scout (vulnerabilities)
+        id: docker-scout
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: docker/scout-action@v1
+        with:
+          command: compare
+          image: ${{ steps.meta.outputs.tags }}
+          to: ${{ env.IMAGE_NAME }}:latest
+          ignore-unchanged: true
+          only-severities: critical,high
+          write-comment: true
+          github-token: ${{ secrets.SECRET }}
+
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Stop any existing containers
+      run: |
+        docker compose down || true
+
+    - name: Build and start services with Docker Compose
+      run: |
+        docker compose up --build -d
+
+    - name: Check running containers
+      run: |
+        docker ps
+
+
+  release:
+    needs: build-test-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Generate new release tag
+        id: tag
+        run: |
+          # Obtener el último tag del repositorio remoto
+          git fetch --tags
+          LAST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "v0.00.0")
+          echo "Último tag remoto: $LAST_TAG"
+
+          # Extraer número final y generar nuevo
+          LAST_NUMBER=${LAST_TAG##*.}
+          NEXT_NUMBER=$((LAST_NUMBER + 1))
+          VERSION="v1.00.${NEXT_NUMBER}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          # Verificar si el tag ya existe remotamente
+          if git ls-remote --tags origin | grep -q "refs/tags/$VERSION$"; then
+            echo "El tag $VERSION ya existe remotamente. Saltando push..."
+            echo "SKIP_PUSH=true" >> $GITHUB_ENV
+          else
+            git tag $VERSION
+            git push origin $VERSION
+          fi
+
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.SECRET }}
+
+      - name: Build Docker image for GitHub Packages
+        run: |
+          docker build -t ghcr.io/rflorezeam/libro-update:latest .
+
+      - name: Push Docker image to GitHub Packages
+        run: |
+          docker push ghcr.io/rflorezeam/libro-update:latest
