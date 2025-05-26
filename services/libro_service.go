@@ -1,13 +1,14 @@
 package services
 
 import (
+	"errors"
+
 	"github.com/rflorezeam/libro-update/models"
 	"github.com/rflorezeam/libro-update/repositories"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 type LibroService interface {
-	ActualizarLibro(id string, libro models.Libro) (*mongo.UpdateResult, error)
+	ActualizarLibro(libro *models.Libro) (*models.Libro, error)
 }
 
 type libroService struct {
@@ -20,6 +21,18 @@ func NewLibroService(repo repositories.LibroRepository) LibroService {
 	}
 }
 
-func (s *libroService) ActualizarLibro(id string, libro models.Libro) (*mongo.UpdateResult, error) {
-	return s.repo.ActualizarLibro(id, libro)
+func (s *libroService) ActualizarLibro(libro *models.Libro) (*models.Libro, error) {
+	if libro == nil {
+		return nil, errors.New("libro no puede ser nil")
+	}
+
+	if libro.ID == "" {
+		return nil, errors.New("ID no puede estar vacío")
+	}
+
+	if libro.Titulo == "" || libro.Autor == "" {
+		return nil, errors.New("datos de libro inválidos")
+	}
+
+	return s.repo.ActualizarLibro(libro)
 } 
